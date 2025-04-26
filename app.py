@@ -41,15 +41,7 @@ if st.button("Download & Show Line Chart"):
         ax.legend()
         st.pyplot(fig)
 
-        # Annual Box Plot
-        st.subheader("Year-wise Boxplot")
-        data['Year'] = data.index.year
-        fig2, ax2 = plt.subplots()
-        data.boxplot(column='Close', by='Year', ax=ax2)
-        plt.suptitle("")
-        ax2.set_title("Annual Distribution of Closing Prices")
-        st.pyplot(fig2)
-
+       
         # Save for reuse
         data.to_csv("downloaded_data.csv")
     else:
