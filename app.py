@@ -65,38 +65,6 @@ def display_forecast_chart(dates, forecast, label):
     st.dataframe(pd.DataFrame({"Date": dates, "Forecasted Price": forecast}))
 
 # Forecast Buttons
-if st.button("🔮 Forecast with Linear Regression"):
-    data = load_data()
-    data['MA7'] = data['Close'].rolling(window=7).mean()
-    data['MA21'] = data['Close'].rolling(window=21).mean()
-    data = data.dropna()
-
-    features = data[['MA7', 'MA21']]
-    target = data['Close']
-
-    X_train, y_train = features[:-30], target[:-30]
-    X_test, y_test = features[-30:], target[-30:]
-
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-    joblib.dump(model, f"{stock_code}_linear.pkl")
-
-    future_features = features[-1:].values
-    forecast_values = model.predict(np.tile(future_features, (30, 1)))
-    forecast_values = forecast_values.flatten()
-    forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
-
-    display_forecast_chart(forecast_dates, forecast_values, "Linear Regression")
-
-if st.button("📈 Forecast with Holt’s Model"):
-    data = load_data()
-    model = ExponentialSmoothing(data['Close'], trend='add', seasonal=None)
-    model_fit = model.fit()
-    forecast = model_fit.forecast(30)
-    forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
-    joblib.dump(model_fit, f"{stock_code}_holt.pkl")
-
-    display_forecast_chart(forecast_dates, forecast.values, "Holt's Model")
 
 if st.button("⚙ Forecast with ARIMA"):
     data = load_data()
