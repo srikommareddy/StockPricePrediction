@@ -9,115 +9,157 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import date, timedelta
+import joblib
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.arima.model import ARIMA
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import load_model
+from datetime import datetime, timedelta
 
-st.set_page_config(layout="wide")
+# App Title
+st.title("📈 Stock Price Forecasting App")
 
-st.title("📈 Stock Forecasting App")
-
-# 1. Input stock code
-stock_code = st.text_input("Enter Stock Symbol (e.g., TCS.NS):", "TCS.NS")
-
+# User Input
+stock_code = st.text_input("Enter Stock Code (e.g., TCS.NS):", value="TCS.NS")
 start_date = "2020-01-01"
-end_date = date.today() - timedelta(days=1)
-forecast_days = 30
+end_date = datetime.today().strftime('%Y-%m-%d')
 
-@st.cache_data(show_spinner=False)
-def load_data(symbol):
-    df = yf.download(symbol, start=start_date, end=end_date)
-    return df[['Close']].dropna()
+# Download and Display Line Chart
+if st.button("Download & Show Line Chart"):
+    data = yf.download(stock_code, start=start_date, end=end_date)
+    if not data.empty:
+        st.success("Data downloaded successfully!")
 
-@st.cache_data(show_spinner=False)
-def prepare_lstm_data(series):
+        # Line Chart
+        st.subheader("Stock Price Line Chart")
+        fig, ax = plt.subplots()
+        ax.plot(data.index, data['Close'], label='Close Price')
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Price (₹)")
+        ax.set_title(f"{stock_code} Closing Price")
+        ax.legend()
+        st.pyplot(fig)
+
+        # Annual Box Plot
+        st.subheader("Year-wise Boxplot")
+        data['Year'] = data.index.year
+        fig2, ax2 = plt.subplots()
+        data.boxplot(column='Close', by='Year', ax=ax2)
+        plt.suptitle("")
+        ax2.set_title("Annual Distribution of Closing Prices")
+        st.pyplot(fig2)
+
+        # Save for reuse
+        data.to_csv("downloaded_data.csv")
+    else:
+        st.error("Failed to download data. Check the stock code.")
+
+# Forecasting Function
+
+def load_data():
+    return pd.read_csv("downloaded_data.csv", index_col=0, parse_dates=True)
+
+def display_forecast_chart(dates, forecast, label):
+    data = load_data()
+    fig, ax = plt.subplots()
+    ax.plot(data.index, data['Close'], label='Historical')
+    ax.plot(dates, forecast, label=label, linestyle='--')
+    ax.set_title(f"{label} Forecast")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Price (₹)")
+    ax.legend()
+    st.pyplot(fig)
+    st.dataframe(pd.DataFrame({"Date": dates, "Forecasted Price": forecast}))
+
+# Forecast Buttons
+if st.button("🔮 Forecast with Linear Regression"):
+    data = load_data()
+    data['MA7'] = data['Close'].rolling(window=7).mean()
+    data['MA21'] = data['Close'].rolling(window=21).mean()
+    data = data.dropna()
+
+    features = data[['MA7', 'MA21']]
+    target = data['Close']
+
+    X_train, y_train = features[:-30], target[:-30]
+    X_test, y_test = features[-30:], target[-30:]
+
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+    joblib.dump(model, f"{stock_code}_linear.pkl")
+
+    future_features = features[-1:].values
+    forecast_values = model.predict(np.tile(future_features, (30, 1)))
+    forecast_values = forecast_values.flatten()
+    forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
+
+    display_forecast_chart(forecast_dates, forecast_values, "Linear Regression")
+
+if st.button("📈 Forecast with Holt’s Model"):
+    data = load_data()
+    model = ExponentialSmoothing(data['Close'], trend='add', seasonal=None)
+    model_fit = model.fit()
+    forecast = model_fit.forecast(30)
+    forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
+    joblib.dump(model_fit, f"{stock_code}_holt.pkl")
+
+    display_forecast_chart(forecast_dates, forecast.values, "Holt's Model")
+
+if st.button("⚙ Forecast with ARIMA"):
+    data = load_data()
+    model = ARIMA(data['Close'], order=(5,1,0))
+    model_fit = model.fit()
+    forecast = model_fit.forecast(30)
+    forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
+    joblib.dump(model_fit, f"{stock_code}_arima.pkl")
+
+    display_forecast_chart(forecast_dates, forecast.values, "ARIMA Model")
+
+if st.button("🤖 Forecast with LSTM"):
+    from tensorflow.keras.models import load_model
+    from sklearn.preprocessing import MinMaxScaler
+
+    data = load_data()
+    close_prices = data['Close'].values.reshape(-1, 1)
     scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(series)
+    scaled_data = scaler.fit_transform(close_prices)
+
+    sequence_length = 60
     X, y = [], []
-    for i in range(60, len(scaled)):
-        X.append(scaled[i-60:i])
-        y.append(scaled[i])
-    return np.array(X), np.array(y), scaler
+    for i in range(sequence_length, len(scaled_data)):
+        X.append(scaled_data[i-sequence_length:i])
+        y.append(scaled_data[i])
+    X, y = np.array(X), np.array(y)
 
-@st.cache_resource(show_spinner=False)
-def train_lstm_model(X_train, y_train):
-    model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=(60, 1)),
-        LSTM(50),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mse')
+    X_train, X_test = X[:-30], X[-30:]
+    y_train, y_test = y[:-30], y[-30:]
+
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import LSTM, Dense, Dropout
+
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+    model.add(Dropout(0.2))
+    model.add(LSTM(50))
+    model.add(Dropout(0.2))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
     model.fit(X_train, y_train, epochs=10, batch_size=32, verbose=0)
-    return model
 
-# Load and show data
-if st.button("Show Line Chart"):
-    data = load_data(stock_code)
-    st.line_chart(data['Close'])
+    model.save(f"{stock_code}_lstm.h5")
+    joblib.dump(scaler, f"{stock_code}_scaler.pkl")
 
-# Forecasting functions
-def forecast_linear_regression(data):
-    df = data.reset_index()
-    df['Days'] = (df['Date'] - df['Date'].min()).dt.days
-    X = df[['Days']].values
-    y = df['Close'].values
-    model = LinearRegression().fit(X, y)
-    future_days = np.arange(X[-1][0] + 1, X[-1][0] + forecast_days + 1).reshape(-1, 1)
-    future_preds = model.predict(future_days)
-    forecast_dates = pd.date_range(data.index[-1] + timedelta(days=1), periods=forecast_days, freq='B')
-    return forecast_dates, future_preds
+    # Forecasting
+    forecast_input = scaled_data[-sequence_length:].reshape(1, sequence_length, 1)
+    forecast = []
+    for _ in range(30):
+        pred = model.predict(forecast_input, verbose=0)
+        forecast.append(pred[0][0])
+        forecast_input = np.append(forecast_input[:, 1:, :], [[pred]], axis=1)
 
-def forecast_holt(data):
-    model = ExponentialSmoothing(data['Close'], trend='add', seasonal=None).fit()
-    forecast = model.forecast(forecast_days)
-    return forecast.index, forecast.values
+    forecast = scaler.inverse_transform(np.array(forecast).reshape(-1, 1)).flatten()
+    forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
 
-def forecast_arima(data):
-    model = ARIMA(data['Close'], order=(5,1,0)).fit()
-    forecast = model.forecast(forecast_days)
-    dates = pd.date_range(data.index[-1] + timedelta(days=1), periods=forecast_days, freq='B')
-    return dates, forecast.values
-
-def forecast_lstm(data):
-    X, y, scaler = prepare_lstm_data(data[['Close']])
-    model = train_lstm_model(X, y)
-    last_sequence = X[-1]
-    future_preds = []
-    for _ in range(forecast_days):
-        pred = model.predict(last_sequence.reshape(1, 60, 1))[0, 0]
-        future_preds.append(pred)
-        last_sequence = np.append(last_sequence[1:], pred).reshape(60, 1)
-    forecast = scaler.inverse_transform(np.array(future_preds).reshape(-1, 1)).flatten()
-    dates = pd.date_range(data.index[-1] + timedelta(days=1), periods=forecast_days, freq='B')
-    return dates, forecast
-
-# Forecast buttons
-data = load_data(stock_code)
-
-for label, func in [
-    ("Forecast with Linear Regression", forecast_linear_regression),
-    ("Forecast with Holt's Model", forecast_holt),
-    ("Forecast with ARIMA", forecast_arima),
-    ("Forecast with LSTM", forecast_lstm)
-]:
-    if st.button(label):
-        dates, forecast_values = func(data)
-        forecast_df = pd.DataFrame({"Date": dates, "Forecasted Price": forecast_values})
-        st.subheader(f"Forecast Results: {label}")
-        st.dataframe(forecast_df.set_index('Date'))
-
-        # Plot historical + forecast
-        plt.figure(figsize=(10, 4))
-        plt.plot(data.index, data['Close'], label='Historical')
-        plt.plot(dates, forecast_values, label='Forecast', color='green')
-        plt.title(f"{label}")
-        plt.xlabel("Date")
-        plt.ylabel("Price (₹)")
-        plt.legend()
-        st.pyplot(plt.gcf())
-        plt.close()
+    display_forecast_chart(forecast_dates, forecast, "LSTM Model")
 
