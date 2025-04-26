@@ -66,15 +66,15 @@ def display_forecast_chart(dates, forecast, label):
 
 # Forecast Buttons
 
-if st.button("⚙ Forecast with ARIMA"):
+if st.button("📈 Forecast with Holt’s Model"):
     data = load_data()
-    model = ARIMA(data['Close'], order=(5,1,0))
+    model = ExponentialSmoothing(data['Close'], trend='add', seasonal=None)
     model_fit = model.fit()
     forecast = model_fit.forecast(30)
     forecast_dates = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=30, freq='B')
-    joblib.dump(model_fit, f"{stock_code}_arima.pkl")
+    joblib.dump(model_fit, f"{stock_code}_holt.pkl")
 
-    display_forecast_chart(forecast_dates, forecast.values, "ARIMA Model")
+    display_forecast_chart(forecast_dates, forecast.values, "Holt's Model")
 
 if st.button("🤖 Forecast with LSTM"):
     from tensorflow.keras.models import load_model
